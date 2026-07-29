@@ -32,37 +32,49 @@ def draw_clock_face():
     
     canvas.create_text(center_x, 230, text="Time is Precious", font=("Helvetica", 10), fill="darkred")
 
+# FIX: Track the scheduled after-ID so we can cancel any existing one
+# before scheduling a new one — prevents double-scheduling (which caused 2x speed)
+_clock_job = None
+
 def update_clock():
+    global _clock_job
+
     canvas.delete("hands")
     now = time.localtime()
     sec = now.tm_sec
     minute = now.tm_min
     hour = now.tm_hour % 12 + minute / 60
-    
+
     # Second hand
     sec_angle = math.radians(sec * 6)
     sec_x = center_x + radius * 0.9 * math.sin(sec_angle)
     sec_y = center_y - radius * 0.9 * math.cos(sec_angle)
     canvas.create_line(center_x, center_y, sec_x, sec_y, fill="red", width=1, tags="hands")
-    
+
     # Minute hand
     min_angle = math.radians(minute * 6)
     min_x = center_x + radius * 0.75 * math.sin(min_angle)
     min_y = center_y - radius * 0.75 * math.cos(min_angle)
     canvas.create_line(center_x, center_y, min_x, min_y, fill="blue", width=2, tags="hands")
-    
+
     # Hour hand
     hour_angle = math.radians(hour * 30)
     hour_x = center_x + radius * 0.5 * math.sin(hour_angle)
     hour_y = center_y - radius * 0.5 * math.cos(hour_angle)
     canvas.create_line(center_x, center_y, hour_x, hour_y, fill="black", width=4, tags="hands")
-    
-    root.after(1000, update_clock)
+
+    # FIX: Cancel any pending call before scheduling the next one
+    # This guarantees exactly one callback is ever in flight at a time
+    if _clock_job is not None:
+        root.after_cancel(_clock_job)
+    _clock_job = root.after(1000, update_clock)
+
 
 # Countdown timer logic
 timer_running = False
 timer_paused = False
 time_left = 0
+_timer_job = None  # FIX: same guard for the timer
 
 def format_time(seconds):
     mins = seconds // 60
@@ -70,31 +82,34 @@ def format_time(seconds):
     return f"{mins:02}:{secs:02}"
 
 def update_timer():
-    global time_left, timer_running, timer_paused
-    
+    global time_left, timer_running, timer_paused, _timer_job
+
     if timer_running and not timer_paused and time_left > 0:
         time_left -= 1
         timer_label.config(text=format_time(time_left))
-        root.after(1000, update_timer)
+        _timer_job = root.after(1000, update_timer)
     elif timer_running and not timer_paused and time_left == 0:
         timer_running = False
         timer_paused = False
         timer_label.config(text="00:00")
         pause_btn.config(text="Pause", state=tk.DISABLED)
-        root.bell()  # Beep
+        root.bell()
         messagebox.showinfo("Time's Up", "Your countdown has finished!")
     elif timer_running and timer_paused:
-        # Timer is paused, check again in 100ms
-        root.after(100, update_timer)
+        _timer_job = root.after(100, update_timer)
 
 def start_countdown():
-    global time_left, timer_running, timer_paused
-    
+    global time_left, timer_running, timer_paused, _timer_job
+
+    # FIX: cancel any running timer job before starting a new one
+    if _timer_job is not None:
+        root.after_cancel(_timer_job)
+
     try:
         minutes = int(entry.get())
         if minutes <= 0:
             raise ValueError
-        
+
         time_left = minutes * 60
         timer_label.config(text=format_time(time_left))
         timer_running = True
@@ -106,7 +121,7 @@ def start_countdown():
 
 def pause_resume_timer():
     global timer_paused
-    
+
     if timer_running:
         timer_paused = not timer_paused
         if timer_paused:
@@ -115,8 +130,13 @@ def pause_resume_timer():
             pause_btn.config(text="Pause")
 
 def reset_timer():
-    global time_left, timer_running, timer_paused
-    
+    global time_left, timer_running, timer_paused, _timer_job
+
+    # FIX: cancel any pending timer callback on reset
+    if _timer_job is not None:
+        root.after_cancel(_timer_job)
+        _timer_job = None
+
     timer_running = False
     timer_paused = False
     time_left = 0
